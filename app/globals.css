@@ -1,0 +1,142 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 3%;
+    --foreground: 0 0% 95%;
+    --card: 0 0% 3%;
+    --card-foreground: 0 0% 95%;
+    --popover: 0 0% 3%;
+    --popover-foreground: 0 0% 95%;
+    --primary: 280 100% 70%;
+    --primary-foreground: 0 0% 0%;
+    --secondary: 240 10% 15%;
+    --secondary-foreground: 0 0% 95%;
+    --muted: 240 10% 15%;
+    --muted-foreground: 0 0% 60%;
+    --accent: 280 100% 70%;
+    --accent-foreground: 0 0% 0%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 95%;
+    --border: 240 10% 20%;
+    --input: 240 10% 20%;
+    --ring: 280 100% 70%;
+    --radius: 0.75rem;
+    --font-inter: "Inter", sans-serif;
+    --font-poppins: "Poppins", sans-serif;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    background: radial-gradient(ellipse at center, #0a0a0f 0%, #000000 100%);
+    min-height: 100vh;
+    position: relative;
+  }
+
+  /* Starfield background */
+  body::before {
+    content: "";
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image: radial-gradient(2px 2px at 20px 30px, #eee, transparent),
+      radial-gradient(2px 2px at 40px 70px, rgba(255, 255, 255, 0.8), transparent),
+      radial-gradient(1px 1px at 90px 40px, #fff, transparent),
+      radial-gradient(1px 1px at 130px 80px, rgba(255, 255, 255, 0.6), transparent),
+      radial-gradient(2px 2px at 160px 30px, rgba(255, 255, 255, 0.4), transparent);
+    background-repeat: repeat;
+    background-size: 200px 100px;
+    animation: twinkle 4s ease-in-out infinite alternate;
+    pointer-events: none;
+    z-index: 1;
+  }
+}
+
+@layer utilities {
+  .font-inter {
+    font-family: var(--font-inter);
+  }
+
+  .font-poppins {
+    font-family: var(--font-poppins);
+  }
+
+  .cosmic-glow {
+    box-shadow: 0 0 20px rgba(168, 85, 247, 0.4), 0 0 40px rgba(168, 85, 247, 0.2);
+  }
+
+  .dream-text {
+    text-shadow: 0 0 10px rgba(168, 85, 247, 0.8), 0 0 20px rgba(168, 85, 247, 0.4);
+  }
+
+  .space-border {
+    border: 1px solid transparent;
+    background: linear-gradient(135deg, rgba(15, 15, 25, 0.8), rgba(25, 15, 35, 0.8)) padding-box,
+      linear-gradient(135deg, rgba(168, 85, 247, 0.3), rgba(139, 92, 246, 0.3)) border-box;
+    backdrop-filter: blur(10px);
+  }
+
+  .hover-float {
+    transition: all 0.3s ease;
+  }
+
+  .hover-float:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 0 25px rgba(168, 85, 247, 0.5), 0 0 50px rgba(168, 85, 247, 0.2);
+  }
+
+  .nebula-bg {
+    background: radial-gradient(
+      ellipse at center,
+      rgba(168, 85, 247, 0.1) 0%,
+      rgba(139, 92, 246, 0.05) 50%,
+      transparent 100%
+    );
+  }
+}
+
+@keyframes twinkle {
+  0% {
+    opacity: 0.3;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes cosmic-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 5px rgba(168, 85, 247, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 20px rgba(168, 85, 247, 0.8), 0 0 30px rgba(168, 85, 247, 0.4);
+  }
+}
+
+.animate-cosmic-pulse {
+  animation: cosmic-pulse 3s ease-in-out infinite;
+}
+
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+.animate-float {
+  animation: float 6s ease-in-out infinite;
+}
