@@ -6,17 +6,12 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Plus, CheckCircle2, Circle, Trash2, Sparkles, ChevronDown, ChevronRight } from "lucide-react"
 import { useTasks } from "../contexts/TaskContext"
+import type { Task } from "../contexts/TaskContext"
 import Calendar from "./Calendar"
-
-// Use the Task interface from context, not a local one
-// Remove parentId and isExpanded from the interface
-interface Task {
-  id: number
-  text: string
-  completed: boolean
-  createdAt: Date
-  subtasks?: Task[]
-}
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Calendar as ShadCalendar } from "@/components/ui/calendar"
+import { format } from "date-fns"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 interface TaskItemProps {
   task: Task
@@ -31,6 +26,10 @@ interface TaskItemProps {
 const TaskItem: React.FC<TaskItemProps> = ({ task, level = 0, onToggle, onDelete, onAddSubtask, expandedIds, onToggleExpanded }) => {
   const [showSubtaskInput, setShowSubtaskInput] = useState(false)
   const [subtaskText, setSubtaskText] = useState("")
+  const [editDate, setEditDate] = useState<Date | undefined>(task.dueAt)
+  const [editTime, setEditTime] = useState<string>(task.dueAt ? format(task.dueAt, "HH:mm") : "")
+  const [editPeriod, setEditPeriod] = useState<string>(task.dueAt ? (task.dueAt.getHours() >= 12 ? "PM" : "AM") : "AM")
+  const { updateTaskDueAt } = useTasks()
 
   const hasSubtasks = Array.isArray(task.subtasks) && task.subtasks.length > 0
   const completedSubtasks = hasSubtasks ? task.subtasks!.filter((st) => st.completed).length : 0
@@ -44,6 +43,20 @@ const TaskItem: React.FC<TaskItemProps> = ({ task, level = 0, onToggle, onDelete
       setSubtaskText("")
       setShowSubtaskInput(false)
     }
+  }
+
+  const to24Hour = (timeStr: string, period: string): { h: number; m: number } | null => {
+    const [hStr, mStr] = timeStr.split(":")
+    const h = parseInt(hStr ?? "", 10)
+    const m = parseInt(mStr ?? "", 10)
+    if (isNaN(h) || isNaN(m)) return null
+    let hour = h
+    if (period === "AM") {
+      if (hour === 12) hour = 0
+    } else if (period === "PM") {
+      if (hour < 12) hour += 12
+    }
+    return { h: hour, m }
   }
 
   return (
@@ -94,11 +107,72 @@ const TaskItem: React.FC<TaskItemProps> = ({ task, level = 0, onToggle, onDelete
                 </span>
               )}
             </div>
-            <p className="text-xs text-purple-300/50 mt-1 font-inter">{task.createdAt.toLocaleTimeString()}</p>
+            <div className="flex items-center gap-3">
+              <p className="text-xs text-purple-300/50 mt-1 font-inter">{task.createdAt.toLocaleTimeString()}</p>
+              {task.dueAt && (
+                <p className="text-xs text-violet-300/80 mt-1 font-inter">Due: {format(task.dueAt, "PPp")}</p>
+              )}
+            </div>
           </div>
 
           {/* Action Buttons */}
           <div className="flex items-center space-x-2 opacity-0 group-hover:opacity-100 transition-all duration-300">
+            {/* Edit Due Date/Time */}
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline" size="sm" className="border-purple-500/30 text-purple-200">
+                  {task.dueAt ? `Due: ${format(task.dueAt, "PPp")}` : "Set due"}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="p-3 w-80" align="start">
+                <div className="space-y-3">
+                  <ShadCalendar mode="single" selected={editDate} onSelect={setEditDate} initialFocus />
+                  <div className="flex items-center gap-2">
+                    <Input type="text" placeholder="hh:mm" value={editTime} onChange={(e) => setEditTime(e.target.value)} className="w-24" />
+                    <Select value={editPeriod} onValueChange={(v) => setEditPeriod(v)}>
+                      <SelectTrigger className="w-24">
+                        <SelectValue placeholder="AM/PM" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="AM">AM</SelectItem>
+                        <SelectItem value="PM">PM</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <div className="flex-1" />
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setEditDate(undefined)
+                        setEditTime("")
+                        setEditPeriod("AM")
+                        updateTaskDueAt(task.id, undefined)
+                      }}
+                    >
+                      Clear
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        let dueAt = editDate ? new Date(editDate) : undefined
+                        if (dueAt && editTime) {
+                          const conv = to24Hour(editTime, editPeriod)
+                          if (conv) {
+                            dueAt.setHours(conv.h, conv.m, 0, 0)
+                          }
+                        }
+                        if (dueAt && !editTime) {
+                          dueAt.setHours(editPeriod === "PM" ? 13 : 9, 0, 0, 0)
+                        }
+                        updateTaskDueAt(task.id, dueAt)
+                      }}
+                    >
+                      Save
+                    </Button>
+                  </div>
+                </div>
+              </PopoverContent>
+            </Popover>
             {/* Add Subtask Button */}
             <button
               onClick={() => setShowSubtaskInput(true)}
@@ -180,12 +254,38 @@ export default function TaskList() {
   const [newTask, setNewTask] = useState("")
   const [showCalendar, setShowCalendar] = useState(false)
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set())
+  const [dueDate, setDueDate] = useState<Date | undefined>(undefined)
+  const [dueTime, setDueTime] = useState<string>("")
+  const [duePeriod, setDuePeriod] = useState<string>("AM")
 
   const handleAddTask = (e: React.FormEvent) => {
     e.preventDefault()
     if (newTask.trim()) {
-      addTask(newTask)
+      let dueAt: Date | undefined = undefined
+      if (dueDate) {
+        dueAt = new Date(dueDate)
+        if (dueTime) {
+          const [hStr, mStr] = dueTime.split(":")
+          let h = parseInt(hStr ?? "", 10)
+          const m = parseInt(mStr ?? "", 10)
+          if (!isNaN(h) && !isNaN(m)) {
+            if (duePeriod === "AM") {
+              if (h === 12) h = 0
+            } else if (duePeriod === "PM") {
+              if (h < 12) h += 12
+            }
+            dueAt.setHours(h, m, 0, 0)
+          }
+        } else {
+          // default to 9 AM or 1 PM based on period
+          dueAt.setHours(duePeriod === "PM" ? 13 : 9, 0, 0, 0)
+        }
+      }
+      addTask(newTask, dueAt)
       setNewTask("")
+      setDueDate(undefined)
+      setDueTime("")
+      setDuePeriod("AM")
     }
   }
 
@@ -253,7 +353,7 @@ export default function TaskList() {
       </div>
 
       {/* Add Task Form */}
-      <form onSubmit={handleAddTask} className="mb-6">
+      <form onSubmit={handleAddTask} className="mb-6 space-y-3">
         <div className="flex space-x-3">
           <div className="flex-grow relative">
             <Input
@@ -270,6 +370,39 @@ export default function TaskList() {
           >
             <Plus className="w-4 h-4" />
           </Button>
+        </div>
+        <div className="flex items-center gap-3">
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline" className="border-purple-500/30 text-purple-200">
+                {dueDate ? `Due: ${format(dueDate, "PP")}` : "Pick due date"}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="p-0 w-auto" align="start">
+              <ShadCalendar
+                mode="single"
+                selected={dueDate}
+                onSelect={setDueDate}
+                initialFocus
+              />
+            </PopoverContent>
+          </Popover>
+          <Input
+            type="text"
+            placeholder="hh:mm"
+            value={dueTime}
+            onChange={(e) => setDueTime(e.target.value)}
+            className="w-24 bg-slate-900/50 border-purple-500/30 text-purple-100 rounded-xl px-3 py-2 font-inter"
+          />
+          <Select value={duePeriod} onValueChange={(v) => setDuePeriod(v)}>
+            <SelectTrigger className="w-24">
+              <SelectValue placeholder="AM/PM" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="AM">AM</SelectItem>
+              <SelectItem value="PM">PM</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
       </form>
 
