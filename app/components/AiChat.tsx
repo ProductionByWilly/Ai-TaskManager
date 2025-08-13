@@ -17,18 +17,58 @@ const SYSTEM_MESSAGE = {
   content: `You are a cosmic AI assistant that helps manage tasks. Your ONLY valid responses for task actions are:
 
   - To add a task, respond ONLY with:
-    { "action": "add", "task": "<task text>" }
+    { "action": "add", "task": "<task text>", "category": "work|personal|errand", "priority": "low|medium|high", "dueDate": "<natural language>", "recurring": "<rule>" }
 
   - To break down a task, respond ONLY with:
     { "action": "subtasks", "parent": "<main task>", "subtasks": ["<step 1>", "<step 2>", ...] }
+
+  - To edit a task, respond ONLY with:
+    { "action": "edit", "from": "<original text>", "to": "<new text>", "category": "work|personal|errand", "priority": "low|medium|high", "dueDate": "<natural language>", "recurring": "<rule>" }
+
+  - To delete a task, respond ONLY with:
+    { "action": "delete", "task": "<task text>" }
 
   Do NOT include any extra text, code block formatting, or explanations. Only output the JSON object for these actions.
 
   If the user is just chatting, reply in a dreamy, space-themed voice, but for any task action, use ONLY the JSON format above.`
 }
 
+// naive NL date parser placeholder (can be replaced with chrono-node)
+function parseNaturalDate(input?: string): Date | undefined {
+  if (!input || typeof input !== "string") return undefined
+  const s = input.trim().toLowerCase()
+  const now = new Date()
+  if (s === "tomorrow") {
+    const d = new Date(now); d.setDate(d.getDate() + 1); d.setHours(9,0,0,0); return d
+  }
+  if (/next\s+monday/.test(s)) {
+    const d = new Date(now)
+    const day = d.getDay()
+    const diff = (1 + 7 - day) % 7 || 7
+    d.setDate(d.getDate() + diff)
+    d.setHours(9,0,0,0)
+    return d
+  }
+  // yyyy-mm-dd or mm/dd or mm/dd/yyyy
+  const iso = Date.parse(s)
+  if (!Number.isNaN(iso)) return new Date(iso)
+  // time only e.g., 3pm or 10:30am
+  const timeMatch = s.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/)
+  if (timeMatch) {
+    const h = parseInt(timeMatch[1], 10)
+    const m = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0
+    const period = timeMatch[3]
+    const d = new Date(now)
+    let hour = h % 12
+    if (period === "pm") hour += 12
+    d.setHours(hour, m, 0, 0)
+    return d
+  }
+  return undefined
+}
+
 export default function AiChat() {
-  const { addTask, deleteTask, addSubtask, tasks } = useTasks()
+  const { addTask, deleteTask, addSubtask, tasks, updateTaskText, updateTaskDueAt, updateTaskPriority } = useTasks()
   const [messages, setMessages] = useState<{ role: string; content: string }[]>([])
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
@@ -45,6 +85,46 @@ export default function AiChat() {
       )
       .replace(/[?.!]/g, "")
       .trim()
+  }
+
+  // Fuzzy match helpers
+  function normalize(s: string) {
+    return s.toLowerCase().trim()
+  }
+  function tokenSet(str: string) {
+    return new Set(normalize(str).split(/\s+/).filter(Boolean))
+  }
+  function overlapScore(a: string, b: string) {
+    const A = tokenSet(a), B = tokenSet(b)
+    if (!A.size || !B.size) return 0
+    let overlap = 0
+    A.forEach(t => { if (B.has(t)) overlap++ })
+    return overlap / Math.max(A.size, B.size)
+  }
+  function findBestTaskId(query: string): number | null {
+    const q = normalize(query)
+    let best: { id: number, score: number } | null = null
+    for (const t of tasks) {
+      const s1 = normalize(t.text)
+      let score = 0
+      if (s1 === q) score = 1
+      else if (s1.includes(q) || q.includes(s1)) score = 0.9
+      else score = overlapScore(t.text, query)
+      if (!best || score > best.score) best = { id: t.id, score }
+    }
+    return best && best.score >= 0.5 ? best.id : null
+  }
+  function editTaskAI(fromText: string, toText: string) {
+    const id = findBestTaskId(fromText)
+    if (id == null) return { ok: false, msg: `🚫 I couldn't find a task like "${fromText}".` }
+    updateTaskText(id, toText.trim())
+    return { ok: true, msg: `✨ The stars have realigned: "${fromText}" → "${toText}".` }
+  }
+  function deleteTaskAI(taskText: string) {
+    const id = findBestTaskId(taskText)
+    if (id == null) return { ok: false, msg: `🚫 I couldn't find "${taskText}" to remove.` }
+    deleteTask(id)
+    return { ok: true, msg: `🗑️ "${taskText}" has drifted into the cosmic void.` }
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -116,56 +196,46 @@ export default function AiChat() {
           }
         }
 
-        // Try to parse the AI response as JSON for subtasks
+        // Try to parse the AI response as JSON for actions
         try {
           const parsed = JSON.parse(content)
-          if (parsed.action === "add" && parsed.task) {
-            // Only add the task if it doesn't already exist
-            let existingTask = tasks.find((t) => t.text.toLowerCase() === parsed.task.toLowerCase())
+          // normalize schema fields
+          const action = parsed.action
+          const taskText = parsed.taskText || parsed.task || parsed.to || parsed.text
+          const originalText = parsed.originalText || parsed.from
+          const newText = parsed.newText || parsed.to
+          const category = parsed.category && ["work","personal","errand"].includes(parsed.category) ? parsed.category : undefined
+          const priority = parsed.priority && ["low","medium","high"].includes(parsed.priority) ? parsed.priority : undefined
+          const recurring = typeof parsed.recurring === "string" ? parsed.recurring : undefined
+          const dueAt = parseNaturalDate(parsed.dueDate || parsed.due_at || parsed.due)
+
+          if (action === "add" && taskText) {
+            let existingTask = tasks.find((t) => t.text.toLowerCase() === String(taskText).toLowerCase())
             let newId: number
             if (!existingTask) {
               newId = Date.now() + Math.floor(Math.random() * 1000)
-              addTask(parsed.task)
+              addTask(String(taskText), dueAt, category, priority, recurring)
               lastAddedTaskId.current = newId
               setMessages((prev) => [
                 ...prev,
-                {
-                  role: "assistant",
-                  content: `✨ I've added "${parsed.task}" to your cosmic task log. 🌌 Would you like some assistance completing this task, or would you like me to break it down into smaller steps? (Reply 'yes' to get help or breakdown)`,
-                },
+                { role: "assistant", content: `✨ Added "${taskText}"${category ? ` (${category})` : ""}${priority ? ` [${priority}]` : ""}${dueAt ? ` due ${dueAt.toLocaleString()}` : ""}.` },
               ])
             } else {
               lastAddedTaskId.current = existingTask.id
-              setMessages((prev) => [
-                ...prev,
-                {
-                  role: "assistant",
-                  content: `"${parsed.task}" is already in your cosmic task log. Would you like some assistance completing this task, or would you like me to break it down into smaller steps? (Reply 'yes' to get help or breakdown)`,
-                },
-              ])
+              setMessages((prev) => [...prev, { role: "assistant", content: `"${taskText}" already exists.` }])
             }
-          } else if (parsed.action === "delete" && parsed.task) {
-            // Find the first matching task (case-insensitive)
-            const taskText = parsed.task.toLowerCase()
-            const taskToDelete = tasks.find((t) => t.text.toLowerCase() === taskText)
-            if (taskToDelete) {
-              deleteTask(taskToDelete.id)
-              setMessages((prev) => [
-                ...prev,
-                {
-                  role: "assistant",
-                  content: `🗑️ I've removed "${parsed.task}" from your cosmic task log. Anything else for the stars?`,
-                },
-              ])
-            } else {
-              setMessages((prev) => [
-                ...prev,
-                {
-                  role: "assistant",
-                  content: `🚫 I couldn't find a task named "${parsed.task}" in your cosmic log. Please check the name and try again!`,
-                },
-              ])
+          } else if (action === "edit" && (originalText || parsed.from) && (newText || parsed.to)) {
+            const res = editTaskAI(String(originalText), String(newText))
+            if (res.ok) {
+              const id = findBestTaskId(String(newText))
+              if (id != null) {
+                updateTaskText(id, String(newText), category)
+                if (dueAt) updateTaskDueAt(id, dueAt)
+                if (priority) updateTaskPriority(id, priority)
+                if (recurring) updateTaskRecurring(id, recurring)
+              }
             }
+            setMessages((prev) => [...prev, { role: "assistant", content: res.msg }])
           } else if (parsed.action === "subtasks" && parsed.parent && Array.isArray(parsed.subtasks)) {
             // Only add subtasks to the parent, do not add the parent again
             let parentTask = tasks.find((t) => t.text.toLowerCase() === parsed.parent.toLowerCase())
@@ -173,25 +243,14 @@ export default function AiChat() {
               parentTask = tasks.find((t) => t.id === lastAddedTaskId.current)
             }
             if (parentTask) {
-              parsed.subtasks.forEach((sub: string) => {
-                addSubtask(parentTask.id, sub)
-              })
-              setMessages((prev) => [
-                ...prev,
-                {
-                  role: "assistant",
-                  content: `🪐 I've broken down "${parsed.parent}" into smaller steps and added them as subtasks. Anything else for the stars?`,
-                },
-              ])
+              parsed.subtasks.forEach((sub: string) => { addSubtask(parentTask.id, sub) })
+              setMessages((prev) => [...prev, { role: "assistant", content: `🪐 Added subtasks under "${parsed.parent}".` }])
             } else {
-              setMessages((prev) => [
-                ...prev,
-                {
-                  role: "assistant",
-                  content: `🚫 I couldn't find the main task "${parsed.parent}" to add subtasks. Please try again!`,
-                },
-              ])
+              setMessages((prev) => [...prev, { role: "assistant", content: `🚫 Couldn't find "${parsed.parent}".` }])
             }
+          } else if (parsed.action === "delete" && (parsed.task || parsed.taskText)) {
+            const res = deleteTaskAI(parsed.task || parsed.taskText)
+            setMessages((prev) => [...prev, { role: "assistant", content: res.msg }])
           } else {
             setMessages((prev) => [...prev, aiMessage])
           }
@@ -199,12 +258,19 @@ export default function AiChat() {
           // Not JSON? Try to extract a task from conversational text as a fallback
           const addMatch = content.match(/add(?:\s+task)?\s+["']?([\w\s]+)["']?/i)
           if (addMatch && addMatch[1]) {
-            addTask(addMatch[1].trim())
+            // basic naive category inference
+            const text = addMatch[1].trim()
+            const lc = text.toLowerCase()
+            let category: "work" | "personal" | "errand" | undefined
+            if (/(meet|email|report|project|office|work)/.test(lc)) category = "work"
+            else if (/(buy|pick up|store|errand|mail|grocer|laundry)/.test(lc)) category = "errand"
+            else category = "personal"
+            addTask(text, undefined, category)
             setMessages((prev) => [
               ...prev,
               {
                 role: "assistant",
-                content: `✨ I've added "${addMatch[1].trim()}" to your cosmic task log. 🌌`,
+                content: `✨ I've added "${text}"${category ? ` in the ${category} constellation` : ""}. 🌌`,
               },
             ])
           } else {
